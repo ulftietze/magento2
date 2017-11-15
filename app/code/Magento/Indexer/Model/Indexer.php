@@ -1,6 +1,6 @@
 <?php
 /**
- * Copyright © 2013-2017 Magento, Inc. All rights reserved.
+ * Copyright © 2016 Magento. All rights reserved.
  * See COPYING.txt for license details.
  */
 namespace Magento\Indexer\Model;
@@ -18,6 +18,7 @@ use Magento\Framework\Indexer\StructureFactory;
  */
 class Indexer extends \Magento\Framework\DataObject implements IdxInterface
 {
+
     /**
      * @var string
      */
@@ -57,6 +58,10 @@ class Indexer extends \Magento\Framework\DataObject implements IdxInterface
      * @var Indexer\CollectionFactory
      */
     protected $indexersFactory;
+    /**
+     * @var \Magento\Framework\Model\ResourceModel\Db\Context
+     */
+    private $context;
 
     /**
      * @param ConfigInterface $config
@@ -74,6 +79,7 @@ class Indexer extends \Magento\Framework\DataObject implements IdxInterface
         \Magento\Framework\Mview\ViewInterface $view,
         Indexer\StateFactory $stateFactory,
         Indexer\CollectionFactory $indexersFactory,
+        \Magento\Framework\Model\ResourceModel\Db\Context $context,
         array $data = []
     ) {
         $this->config = $config;
@@ -82,6 +88,7 @@ class Indexer extends \Magento\Framework\DataObject implements IdxInterface
         $this->view = $view;
         $this->stateFactory = $stateFactory;
         $this->indexersFactory = $indexersFactory;
+        $this->context = $context;
         parent::__construct($data);
     }
 
@@ -394,6 +401,33 @@ class Indexer extends \Magento\Framework\DataObject implements IdxInterface
     }
 
     /**
+     * @throws \Exception
+     */
+    protected function lockState()
+    {
+        $indexerId = $this->getId();
+        $return = $this->context->getResources()->getConnection()->query(
+            'SELECT GET_LOCK (":indexerId", 1)', ['indexerId' => $indexerId]
+        )->fetch();
+
+        if (in_array(0, $return)) {
+            throw new \Exception("Already locked.");
+        }
+
+    }
+
+    /**
+     *
+     */
+    protected function releaseState()
+    {
+        $indexerId = $this->getId();
+        $this->context->getResources()->getConnection()->query(
+            'SELECT RELEASE_LOCK(":indexerId")', ['indexerId' => $indexerId]
+        );
+    }
+
+    /**
      * Regenerate full index
      *
      * @return void
@@ -401,6 +435,12 @@ class Indexer extends \Magento\Framework\DataObject implements IdxInterface
      */
     public function reindexAll()
     {
+        try {
+            $this->lockState();
+        } catch (\Exception $exy) {
+            $this->releaseState();
+            return;
+        }
         if ($this->getState()->getStatus() != StateInterface::STATUS_WORKING) {
             $state = $this->getState();
             $state->setStatus(StateInterface::STATUS_WORKING);
@@ -420,6 +460,7 @@ class Indexer extends \Magento\Framework\DataObject implements IdxInterface
                 throw $exception;
             }
         }
+        $this->releaseState();
     }
 
     /**
